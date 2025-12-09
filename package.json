@@ -1,0 +1,19 @@
+{
+  "name": "fbpay-business-admin",
+  "version": "4.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cashfree-pg": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "mongoose": "^7.0.0",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^6.9.0",
+    "pdfkit": "^0.13.0",
+    "razorpay": "^2.8.1"
+  }
+}
