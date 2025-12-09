@@ -1,4 +1,4 @@
-require("dotenv").config({ path: "./.env" });
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
@@ -6,20 +6,25 @@ const mongoose = require("mongoose");
 const nodemailer = require("nodemailer");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
-app.use(cors({
-  origin: "https://fbpaybusiness.netlify.app",
-  methods: ["GET", "POST"],
-  credentials: false
-}));
+
+// -----------------------------------------------------
+// CORS (ONLY FRONTEND ALLOWED)
+// -----------------------------------------------------
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL, // https://fbpaybusiness.netlify.app
+    methods: ["GET", "POST"],
+  })
+);
 
 app.use(express.json());
 
 // -----------------------------------------------------
-// ✅ ENV VARIABLES (Render / Local .env)
+// ENV VARIABLES
 // -----------------------------------------------------
 const MONGO_URI = process.env.MONGO_URI;
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID;
@@ -27,9 +32,7 @@ const CASHFREE_SECRET = process.env.CASHFREE_SECRET;
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 const FAST2SMS_KEY = process.env.FAST2SMS_KEY;
-
-const FRONTEND_URL = process.env.FRONTEND_URL;  
-// Example: https://fbpaybusiness.netlify.app
+const FRONTEND_URL = process.env.FRONTEND_URL;
 
 // -----------------------------------------------------
 // CONNECT MONGODB
@@ -40,7 +43,7 @@ mongoose
   .catch((err) => console.log("MongoDB Error:", err));
 
 // -----------------------------------------------------
-// PAYMENT SCHEMA
+// Payment Schema
 // -----------------------------------------------------
 const PaymentSchema = new mongoose.Schema({
   name: String,
@@ -56,7 +59,7 @@ const PaymentSchema = new mongoose.Schema({
 const Payment = mongoose.model("Payment", PaymentSchema);
 
 // -----------------------------------------------------
-// CREATE ORDER — CASHFREE REST API
+// CREATE ORDER (CASHFREE REST API)
 // -----------------------------------------------------
 app.post("/create-order", async (req, res) => {
   try {
@@ -72,11 +75,11 @@ app.post("/create-order", async (req, res) => {
         customer_name: name,
       },
       order_meta: {
-        return_url: "https://fbpaybusiness.netlify.app/success.html?order_id={order_id}&payment_id={cf_payment_id}",
+        return_url: `${FRONTEND_URL}/success.html?order_id={order_id}&payment_id={cf_payment_id}`,
       },
     };
 
-    const response = await fetch("https://sandbox.cashfree.com/pg/orders", {
+    const cfResponse = await fetch("https://sandbox.cashfree.com/pg/orders", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -87,7 +90,7 @@ app.post("/create-order", async (req, res) => {
       body: JSON.stringify(orderData),
     });
 
-    const data = await response.json();
+    const data = await cfResponse.json();
     console.log("CASHFREE ORDER:", data);
 
     await Payment.create({
@@ -118,7 +121,7 @@ app.post("/cashfree-success", async (req, res) => {
       { payment_id, status: "SUCCESS" }
     );
 
-    // ---------------------------- PDF RECEIPT ----------------------------
+    // --------------------- Create PDF Receipt ---------------------
     const pdf = new PDFDocument({ margin: 40 });
     const filename = `receipt_${Date.now()}.pdf`;
     pdf.pipe(fs.createWriteStream(filename));
@@ -126,17 +129,18 @@ app.post("/cashfree-success", async (req, res) => {
     pdf.fontSize(22).text("FB Pay Business", { align: "center" });
     pdf.fontSize(16).text("Payment Receipt", { align: "center" }).moveDown();
 
-    pdf.fontSize(12);
-    pdf.text(`Customer Name: ${name}`);
-    pdf.text(`Phone: ${phone}`);
-    pdf.text(`Email: ${email}`);
-    pdf.text(`Order ID: ${order_id}`);
-    pdf.text(`Payment ID: ${payment_id}`);
-    pdf.text(`Amount Paid: ₹${amount}`);
-    pdf.text(`Date: ${new Date().toLocaleString()}`);
+    pdf.fontSize(12)
+      .text(`Customer Name: ${name}`)
+      .text(`Phone: ${phone}`)
+      .text(`Email: ${email}`)
+      .text(`Order ID: ${order_id}`)
+      .text(`Payment ID: ${payment_id}`)
+      .text(`Amount Paid: ₹${amount}`)
+      .text(`Date: ${new Date().toLocaleString()}`);
+
     pdf.end();
 
-    // ---------------------------- SEND EMAIL ----------------------------
+    // ------------------------ Send Email -------------------------
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -149,11 +153,11 @@ app.post("/cashfree-success", async (req, res) => {
       from: `FB Pay Business <${EMAIL_USER}>`,
       to: email,
       subject: "Your Payment Receipt",
-      text: "Thanks for your payment. Receipt is attached.",
+      text: "Thank you for your payment. Your receipt is attached.",
       attachments: [{ filename, path: "./" + filename }],
     });
 
-    // ---------------------------- SEND SMS ----------------------------
+    // ------------------------ Send SMS -------------------------
     await fetch("https://www.fast2sms.com/dev/bulkV2", {
       method: "POST",
       headers: {
@@ -169,15 +173,18 @@ app.post("/cashfree-success", async (req, res) => {
       }),
     });
 
-    res.json({ status: "SUCCESS" });
+    res.json({
+      status: "SUCCESS",
+      receipt_url: `${FRONTEND_URL}/receipts/${filename}`,
+    });
   } catch (err) {
     console.log("SUCCESS ERROR:", err);
-    res.status(500).json({ error: "Failed to send receipt" });
+    res.status(500).json({ error: "Failed to process success" });
   }
 });
 
 // -----------------------------------------------------
-// ADMIN API
+// ADMIN PANEL — GET ALL PAYMENTS
 // -----------------------------------------------------
 app.get("/admin/payments", async (req, res) => {
   const all = await Payment.find().sort({ date: -1 });
