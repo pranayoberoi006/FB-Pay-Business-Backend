@@ -10,7 +10,12 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "https://fbpaybusiness.netlify.app",
+  methods: ["GET", "POST"],
+  credentials: false
+}));
+
 app.use(express.json());
 
 // -----------------------------------------------------
@@ -67,7 +72,7 @@ app.post("/create-order", async (req, res) => {
         customer_name: name,
       },
       order_meta: {
-        return_url: `${FRONTEND_URL}/success.html?order_id={order_id}&payment_id={cf_payment_id}`,
+        return_url: "https://fbpaybusiness.netlify.app/success.html?order_id={order_id}&payment_id={cf_payment_id}",
       },
     };
 
