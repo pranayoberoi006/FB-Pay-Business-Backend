@@ -7,21 +7,33 @@ const AdminUser = require("../models/User");
 const Payment = require("../models/Payment");
 const auth = require("../middleware/auth");
 
-// -------------------------------------------------------
-// DEBUG ROUTE — CHECK WHICH USER BACKEND IS SEEING
-// -------------------------------------------------------
-router.get("/test-user", async (req, res) => {
+/* -------------------------------------------------------
+   ONE-TIME SUPERADMIN PASSWORD RESET (TEMPORARY)
+------------------------------------------------------- */
+router.get("/reset-superadmin", async (req, res) => {
   try {
-    const user = await AdminUser.findOne({});
-    return res.json(user);
+    const newPassword = "Admin@123";
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    await AdminUser.findOneAndUpdate(
+      { email: "oberoipranay0@gmail.com" },
+      { password: hash }
+    );
+
+    res.json({
+      status: "Superadmin password reset successfully",
+      login_email: "oberoipranay0@gmail.com",
+      new_password: newPassword
+    });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// -------------------------------------------------------
-// SUPERADMIN — Create Admin / Viewer Users
-// -------------------------------------------------------
+/* -------------------------------------------------------
+   SUPERADMIN — Create Admin / Viewer Users
+------------------------------------------------------- */
 router.post("/create-user", auth("superadmin"), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -41,9 +53,9 @@ router.post("/create-user", auth("superadmin"), async (req, res) => {
   }
 });
 
-// -------------------------------------------------------
-// LOGIN
-// -------------------------------------------------------
+/* -------------------------------------------------------
+   LOGIN
+------------------------------------------------------- */
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -70,17 +82,17 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// -------------------------------------------------------
-// FETCH ALL PAYMENTS (Admin + Viewer + Superadmin)
-// -------------------------------------------------------
+/* -------------------------------------------------------
+   FETCH ALL PAYMENTS (Admin + Viewer + Superadmin)
+------------------------------------------------------- */
 router.get("/payments", auth(), async (req, res) => {
   const payments = await Payment.find().sort({ date: -1 });
   res.json(payments);
 });
 
-// -------------------------------------------------------
-// FETCH ALL USERS (ONLY SUPERADMIN)
-// -------------------------------------------------------
+/* -------------------------------------------------------
+   FETCH ALL USERS (ONLY SUPERADMIN)
+------------------------------------------------------- */
 router.get("/users", auth("superadmin"), async (req, res) => {
   const users = await AdminUser.find();
   res.json(users);
