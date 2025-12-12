@@ -8,6 +8,18 @@ const Payment = require("../models/Payment");
 const auth = require("../middleware/auth");
 
 // -------------------------------------------------------
+// DEBUG ROUTE — CHECK WHICH USER BACKEND IS SEEING
+// -------------------------------------------------------
+router.get("/test-user", async (req, res) => {
+  try {
+    const user = await AdminUser.findOne({});
+    return res.json(user);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------
 // SUPERADMIN — Create Admin / Viewer Users
 // -------------------------------------------------------
 router.post("/create-user", auth("superadmin"), async (req, res) => {
