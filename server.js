@@ -1,5 +1,4 @@
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
@@ -7,32 +6,24 @@ const nodemailer = require("nodemailer");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
+const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-const fetch = (...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args));
-
-// CORRECT imports based on YOUR project
+// IMPORTANT: make sure these two files actually exist at these paths:
 const adminRoutes = require("./routes/adminRoutes");
 const Payment = require("./models/Payment");
 
 const app = express();
 
-// ------------------------------------------------------------
-// CORS
-// ------------------------------------------------------------
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
-    methods: ["GET", "POST"],
-    credentials: false,
+    origin: process.env.FRONTEND_URL || "*",
+    methods: ["GET", "POST", "PUT", "DELETE"],
   })
 );
 
 app.use(express.json());
 
-// ------------------------------------------------------------
 // ENV
-// ------------------------------------------------------------
 const {
   MONGO_URI,
   CASHFREE_APP_ID,
@@ -41,23 +32,26 @@ const {
   EMAIL_PASS,
   FAST2SMS_KEY,
   FRONTEND_URL,
+  JWT_SECRET,
 } = process.env;
 
-// ------------------------------------------------------------
-// MONGO CONNECT
-// ------------------------------------------------------------
+// health check
+app.get("/_health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// connect to mongo
 mongoose
-  .connect(MONGO_URI)
+  .connect(MONGO_URI, { keepAlive: true })
   .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.log("MongoDB Error:", err));
+  .catch((err) => console.error("MongoDB Error:", err));
 
-
-// ------------------------------------------------------------
-// CREATE ORDER
-// ------------------------------------------------------------
+// create-order (example)
 app.post("/create-order", async (req, res) => {
   try {
+    // minimal validation
     const { name, phone, email, amount } = req.body;
+    if (!name || !phone || !email || !amount) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
 
     const orderData = {
       order_amount: Number(amount),
@@ -69,11 +63,13 @@ app.post("/create-order", async (req, res) => {
         customer_name: name,
       },
       order_meta: {
-        return_url: `${FRONTEND_URL}/success.html?order_id={order_id}&payment_id={cf_payment_id}`,
+        return_url:
+          (FRONTEND_URL || "http://127.0.0.1:5500") +
+          `/success.html?order_id={order_id}&payment_id={cf_payment_id}`,
       },
     };
 
-    const cf = await fetch("https://sandbox.cashfree.com/pg/orders", {
+    const cfResp = await fetch("https://sandbox.cashfree.com/pg/orders", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -84,7 +80,7 @@ app.post("/create-order", async (req, res) => {
       body: JSON.stringify(orderData),
     });
 
-    const data = await cf.json();
+    const data = await cfResp.json();
     console.log("CASHFREE ORDER:", data);
 
     await Payment.create({
@@ -96,44 +92,34 @@ app.post("/create-order", async (req, res) => {
       status: "PENDING",
     });
 
-    res.json({ payment_session_id: data.payment_session_id });
+    res.json({ payment_session_id: data.payment_session_id, data });
   } catch (err) {
-    console.log("CREATE ORDER ERROR:", err);
-    res.status(500).json({ error: "Order creation failed" });
+    console.error("CREATE ORDER ERROR:", err);
+    res.status(500).json({ error: "Order creation failed", detail: String(err) });
   }
 });
 
-// ------------------------------------------------------------
-// PAYMENT SUCCESS
-// ------------------------------------------------------------
+// success endpoint used by frontend
 app.post("/cashfree-success", async (req, res) => {
   try {
     const { name, phone, email, amount, order_id, payment_id } = req.body;
+    await Payment.findOneAndUpdate({ order_id }, { payment_id, status: "SUCCESS" });
 
-    await Payment.findOneAndUpdate(
-      { order_id },
-      { payment_id, status: "SUCCESS" }
-    );
-
+    // generate a simple pdf (you can expand)
     const filename = `receipt_${Date.now()}.pdf`;
-    const filepath = path.join(__dirname, filename);
-
+    const filePath = path.join(__dirname, filename);
     const pdf = new PDFDocument({ margin: 40 });
-    pdf.pipe(fs.createWriteStream(filepath));
-
-    pdf.fontSize(26).text("FB Pay Business", { align: "center" });
-    pdf.fontSize(16).text("Payment Receipt", { align: "center" });
-
-    pdf.text(`Name: ${name}`);
+    pdf.pipe(fs.createWriteStream(filePath));
+    pdf.fontSize(20).text("FB Pay Business - Receipt", { align: "center" }).moveDown();
+    pdf.fontSize(12).text(`Name: ${name}`);
     pdf.text(`Email: ${email}`);
     pdf.text(`Phone: ${phone}`);
     pdf.text(`Order ID: ${order_id}`);
     pdf.text(`Payment ID: ${payment_id}`);
     pdf.text(`Amount: ₹${amount}`);
-    pdf.text(`Date: ${new Date().toLocaleString()}`);
-
     pdf.end();
 
+    // send email (simple)
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: EMAIL_USER, pass: EMAIL_PASS },
@@ -143,22 +129,23 @@ app.post("/cashfree-success", async (req, res) => {
       from: `FB Pay Business <${EMAIL_USER}>`,
       to: email,
       subject: "Your Payment Receipt",
-      attachments: [{ filename, path: filepath }],
+      text: "Thanks for the payment. Receipt attached.",
+      attachments: [{ filename, path: filePath }],
     });
 
     res.json({ status: "SUCCESS" });
   } catch (err) {
-    console.log("SUCCESS ERROR:", err);
-    res.status(500).json({ error: "Failed" });
+    console.error("SUCCESS ERROR:", err);
+    res.status(500).json({ error: "Failed to process success" });
   }
 });
 
-// ------------------------------------------------------------
-// ADMIN ROUTES
-// ------------------------------------------------------------
+// admin routes mount - must exist
 app.use("/admin-api", adminRoutes);
 
-// ------------------------------------------------------------
-// START SERVER
-// ------------------------------------------------------------
-app.listen(5000, () => console.log("FB Pay Business Backend Running on Port 5000"));
+// fallback route to help debugging on Render
+app.get("/", (req, res) => res.send("FB Pay Business backend root. See /_health"));
+
+// Use the port that Render sets, or fallback to 5000 for local dev
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`FB Pay Business Backend running on port ${PORT}`));
