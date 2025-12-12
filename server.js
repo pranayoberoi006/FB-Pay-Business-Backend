@@ -141,11 +141,21 @@ app.post("/cashfree-success", async (req, res) => {
 });
 
 // admin routes mount - must exist
+// admin routes
 app.use("/admin-api", adminRoutes);
 
-// fallback route to help debugging on Render
+// 🚨 TEMPORARY EMERGENCY LOGIN
+app.post("/admin-api/force-login", (req, res) => {
+  return res.json({
+    token: "FORCE_TOKEN_123",
+    role: "superadmin",
+    name: "Pranay"
+  });
+});
+
+// fallback
 app.get("/", (req, res) => res.send("FB Pay Business backend root. See /_health"));
 
-// Use the port that Render sets, or fallback to 5000 for local dev
+// start
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`FB Pay Business Backend running on port ${PORT}`));
