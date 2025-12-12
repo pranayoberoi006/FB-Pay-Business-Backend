@@ -13,18 +13,21 @@ router.post("/create-user", auth("superadmin"), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
-    await AdminUser.create({
+    const user = await AdminUser.create({
       name,
       email,
-      password,   // ← save plain text
+      password, // plain text as you decided
       role
     });
 
-    res.json({ status: "User created" });
+    // IMPORTANT FIX
+    res.json(user);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // -------------------------------------------------------
 // LOGIN (PLAIN PASSWORD CHECK)
