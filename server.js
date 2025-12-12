@@ -6,60 +6,55 @@ const mongoose = require("mongoose");
 const nodemailer = require("nodemailer");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
+const path = require("path");
+
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
+// CORRECT imports based on YOUR project
+const adminRoutes = require("./routes/adminRoutes");
+const Payment = require("./models/Payment");
+
 const app = express();
 
-// -----------------------------------------------------
-// CORS (ONLY FRONTEND ALLOWED)
-// -----------------------------------------------------
-app.use(cors({
-    origin: "https://fbpaybusiness.netlify.app",
-    methods: ["GET", "POST"]
-}));
-
+// ------------------------------------------------------------
+// CORS
+// ------------------------------------------------------------
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    methods: ["GET", "POST"],
+    credentials: false,
+  })
+);
 
 app.use(express.json());
 
-// -----------------------------------------------------
-// ENV VARIABLES
-// -----------------------------------------------------
-const MONGO_URI = process.env.MONGO_URI;
-const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID;
-const CASHFREE_SECRET = process.env.CASHFREE_SECRET;
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
-const FAST2SMS_KEY = process.env.FAST2SMS_KEY;
-const FRONTEND_URL = process.env.FRONTEND_URL;
+// ------------------------------------------------------------
+// ENV
+// ------------------------------------------------------------
+const {
+  MONGO_URI,
+  CASHFREE_APP_ID,
+  CASHFREE_SECRET,
+  EMAIL_USER,
+  EMAIL_PASS,
+  FAST2SMS_KEY,
+  FRONTEND_URL,
+} = process.env;
 
-// -----------------------------------------------------
-// CONNECT MONGODB
-// -----------------------------------------------------
+// ------------------------------------------------------------
+// MONGO CONNECT
+// ------------------------------------------------------------
 mongoose
   .connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.log("MongoDB Error:", err));
 
-// -----------------------------------------------------
-// Payment Schema
-// -----------------------------------------------------
-const PaymentSchema = new mongoose.Schema({
-  name: String,
-  phone: String,
-  email: String,
-  amount: Number,
-  order_id: String,
-  payment_id: String,
-  status: { type: String, default: "PENDING" },
-  date: { type: Date, default: Date.now },
-});
 
-const Payment = mongoose.model("Payment", PaymentSchema);
-
-// -----------------------------------------------------
-// CREATE ORDER (CASHFREE REST API)
-// -----------------------------------------------------
+// ------------------------------------------------------------
+// CREATE ORDER
+// ------------------------------------------------------------
 app.post("/create-order", async (req, res) => {
   try {
     const { name, phone, email, amount } = req.body;
@@ -74,12 +69,11 @@ app.post("/create-order", async (req, res) => {
         customer_name: name,
       },
       order_meta: {
-    return_url: `https://fbpaybusiness.netlify.app/success.html?order_id={order_id}&payment_id={cf_payment_id}&name=${name}&email=${email}&phone=${phone}&amount=${amount}`
-}
-,
+        return_url: `${FRONTEND_URL}/success.html?order_id={order_id}&payment_id={cf_payment_id}`,
+      },
     };
 
-    const cfResponse = await fetch("https://sandbox.cashfree.com/pg/orders", {
+    const cf = await fetch("https://sandbox.cashfree.com/pg/orders", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -90,7 +84,7 @@ app.post("/create-order", async (req, res) => {
       body: JSON.stringify(orderData),
     });
 
-    const data = await cfResponse.json();
+    const data = await cf.json();
     console.log("CASHFREE ORDER:", data);
 
     await Payment.create({
@@ -109,9 +103,9 @@ app.post("/create-order", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------
+// ------------------------------------------------------------
 // PAYMENT SUCCESS
-// -----------------------------------------------------
+// ------------------------------------------------------------
 app.post("/cashfree-success", async (req, res) => {
   try {
     const { name, phone, email, amount, order_id, payment_id } = req.body;
@@ -121,79 +115,50 @@ app.post("/cashfree-success", async (req, res) => {
       { payment_id, status: "SUCCESS" }
     );
 
-    // --------------------- Create PDF Receipt ---------------------
-    const pdf = new PDFDocument({ margin: 40 });
     const filename = `receipt_${Date.now()}.pdf`;
-    pdf.pipe(fs.createWriteStream(filename));
+    const filepath = path.join(__dirname, filename);
 
-    pdf.fontSize(22).text("FB Pay Business", { align: "center" });
-    pdf.fontSize(16).text("Payment Receipt", { align: "center" }).moveDown();
+    const pdf = new PDFDocument({ margin: 40 });
+    pdf.pipe(fs.createWriteStream(filepath));
 
-    pdf.fontSize(12)
-      .text(`Customer Name: ${name}`)
-      .text(`Phone: ${phone}`)
-      .text(`Email: ${email}`)
-      .text(`Order ID: ${order_id}`)
-      .text(`Payment ID: ${payment_id}`)
-      .text(`Amount Paid: ₹${amount}`)
-      .text(`Date: ${new Date().toLocaleString()}`);
+    pdf.fontSize(26).text("FB Pay Business", { align: "center" });
+    pdf.fontSize(16).text("Payment Receipt", { align: "center" });
+
+    pdf.text(`Name: ${name}`);
+    pdf.text(`Email: ${email}`);
+    pdf.text(`Phone: ${phone}`);
+    pdf.text(`Order ID: ${order_id}`);
+    pdf.text(`Payment ID: ${payment_id}`);
+    pdf.text(`Amount: ₹${amount}`);
+    pdf.text(`Date: ${new Date().toLocaleString()}`);
 
     pdf.end();
 
-    // ------------------------ Send Email -------------------------
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS,
-      },
+      auth: { user: EMAIL_USER, pass: EMAIL_PASS },
     });
 
     await transporter.sendMail({
       from: `FB Pay Business <${EMAIL_USER}>`,
       to: email,
       subject: "Your Payment Receipt",
-      text: "Thank you for your payment. Your receipt is attached.",
-      attachments: [{ filename, path: "./" + filename }],
+      attachments: [{ filename, path: filepath }],
     });
 
-    // ------------------------ Send SMS -------------------------
-    await fetch("https://www.fast2sms.com/dev/bulkV2", {
-      method: "POST",
-      headers: {
-        authorization: FAST2SMS_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        route: "v3",
-        sender_id: "TXTIND",
-        message: `FB Pay Business: Payment Successful. Amount ₹${amount}`,
-        language: "english",
-        numbers: phone,
-      }),
-    });
-
-    res.json({
-      status: "SUCCESS",
-      receipt_url: `${FRONTEND_URL}/receipts/${filename}`,
-    });
+    res.json({ status: "SUCCESS" });
   } catch (err) {
     console.log("SUCCESS ERROR:", err);
-    res.status(500).json({ error: "Failed to process success" });
+    res.status(500).json({ error: "Failed" });
   }
 });
 
-// -----------------------------------------------------
-// ADMIN PANEL — GET ALL PAYMENTS
-// -----------------------------------------------------
-app.get("/admin/payments", async (req, res) => {
-  const all = await Payment.find().sort({ date: -1 });
-  res.json(all);
-});
+// ------------------------------------------------------------
+// ADMIN ROUTES
+// ------------------------------------------------------------
+app.use("/admin-api", adminRoutes);
 
-// -----------------------------------------------------
+// ------------------------------------------------------------
 // START SERVER
-// -----------------------------------------------------
-app.listen(5000, () => {
-  console.log("FB Pay Business Backend Running on Port 5000");
-});
+// ------------------------------------------------------------
+app.listen(5000, () => console.log("FB Pay Business Backend Running on Port 5000"));
