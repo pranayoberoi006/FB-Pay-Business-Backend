@@ -27,6 +27,9 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, 
+{
+  collection: "adminusers"   // 🔥 VERY IMPORTANT — Matches your MongoDB collection
 });
 
 module.exports = mongoose.model("AdminUser", UserSchema);
